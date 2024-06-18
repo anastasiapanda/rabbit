@@ -1,0 +1,340 @@
+// Заполняем поля для сделки
+// Создаём Sales Order
+// Вызывает триггер для Sales Order
+//
+// Итоговый массив для конвертации
+dataMap = Map();
+errorList = List();
+//\\
+// Значения лида
+convertingLead = zoho.crm.getRecordById("Leads",leadID);
+leadInfo = convertingLead.get("Description");
+info leadInfo;
+/*
+"&": "&amp;",
+'"': "&quot;",
+"'": "&apos;",
+">": "&gt;",
+"<": "&lt;"
+*/
+leadInfo = leadInfo.replaceAll("&quot;","\\\"");
+info "leadInfo";
+info leadInfo;
+// Словарь для значений сделки
+dealValues = Map();
+// Ищем контакт с указанной почтой
+searchCont = "(Email:equals:" + convertingLead.get("Email") + ")";
+info searchCont;
+contactResp = zoho.crm.searchRecords("Contacts",searchCont);
+info "contactResp";
+info contactResp;
+info contactResp.size();
+if(contactResp.size() != 0)
+{
+	// Почта уникальна, поэтому будет только 1 элемент в массиве
+	// Добавляем в итоговый массив
+	leadPhone = convertingLead.get("Phone");
+	contactPhone = contactResp.get(0).get("Phone");
+	dataMap.put("Contacts",contactResp.get(0).get("id"));
+	dealValues.put("Contact_Phone",leadPhone);
+	//contactResp.get(0).get("Phone")
+	if(leadPhone != contactPhone)
+	{
+		others = contactResp.get(0).get("Other_Phones");
+		if(others != null)
+		{
+			// Проверить
+			if(!others.contains(contactPhone))
+			{
+				others = others + "\n" + contactPhone;
+			}
+		}
+		else
+		{
+			others = contactPhone;
+		}
+		zoho.crm.updateRecord("Contacts",contactResp.get(0).get("id"),{"Phone":leadPhone,"Other_Phones":others});
+	}
+}
+else
+{
+	dealValues.put("Contact_Phone",convertingLead.get("Phone"));
+}
+// Заполнение полей сделки
+// Подготовка повторно используемых полей
+delivery = leadInfo.get("delivery");
+deliveryDate = leadInfo.get("deliveryDate").toDate("dd-MM-yyyy");
+orderID = leadInfo.get("payment").get("orderid");
+amount = leadInfo.get("payment").get("amount").toDecimal();
+// Стандартные поля
+dealValues.put("Deal_Name","Заявка " + orderID + " с почты " + convertingLead.get("Email"));
+dealValues.put("Stage","Новая");
+dealValues.put("Closing_Date",deliveryDate);
+dealValues.put("Amount",amount);
+deliveryPrice = leadInfo.get("payment").get("delivery_price").toDecimal();
+dealValues.put("DeliveryPrice",deliveryPrice);
+// Доп поля
+dealValues.put("orderID",orderID);
+dealValues.put("receiverInfo",leadInfo.get("receiverInfo"));
+dealValues.put("receiverName",leadInfo.get("receiverName"));
+receiverPhone = leadInfo.get("receiverPhone");
+if(receiverPhone != null)
+{
+	receiverPhone = receiverPhone.replaceAll("\+7 \+7","\+7");
+}
+dealValues.put("receiverPhone",receiverPhone);
+dealValues.put("isCallReceiver",leadInfo.get("isCallReceiver"));
+dealValues.put("promoCode",leadInfo.get("payment").get("promocode"));
+dealValues.put("cardText",leadInfo.get("cardText"));
+dealValues.put("deliveryAddress",leadInfo.get("deliveryAddress"));
+dealValues.put("addInfo",leadInfo.get("addInfo"));
+dealValues.put("formname",leadInfo.get("formname"));
+dealValues.put("formid",leadInfo.get("formname"));
+dealValues.put("isCall",leadInfo.get("isCall"));
+if(leadInfo.get("isCall30") == "yes")
+{
+	dealValues.put("isCall30",true);
+}
+else
+{
+	dealValues.put("isCall30",false);
+}
+dealValues.put("referer",leadInfo.get("referer"));
+dealValues.put("paymentsystem",leadInfo.get("paymentsystem"));
+// ПРОМОКОДЫ
+forUs = "";
+if(leadInfo.get("payment").get("promocode") != null && leadInfo.get("payment").get("promocode").contains("SHOKO"))
+{
+	forUs = forUs + "+ ШОКОЛАДКА БЕСПЛАТНАЯ\n";
+}
+// Добавляем поля к сделке
+dataMap.put("Deals",dealValues);
+// Заказ на продажу
+salesOrderMap = Map();
+salesOrderMap.put("Subject","Продажа " + orderID + " с почты " + convertingLead.get("Email"));
+salesProdList = List();
+// Вытаскиваем продукты
+prodList = leadInfo.get("payment").get("products");
+errors = "";
+for each  prodKey in prodList.keys()
+{
+	product = prodList.get(prodKey);
+	info "product";
+	info product;
+	productName = product.get("name");
+	productSku = product.get("sku");
+	price = product.get("price").toDecimal();
+	productInfo = "";
+	if(productSku.containsIgnoreCase("daily") || productSku.containsIgnoreCase("future"))
+	{
+		info 123;
+		productDate = "";
+		// Букеты дня
+		if(productSku.containsIgnoreCase("daily"))
+		{
+			// daily
+			productDate = productName.subString(productName.length() - 10,productName.length());
+			if(productDate.contains('.'))
+			{
+				productDate = productDate.toDate("dd.MM.yyyy");
+			}
+			else
+			{
+				productDate = productDate.toDate("MM/dd/yyyy");
+			}
+		}
+		else
+		{
+			// future
+			productDate = deliveryDate;
+		}
+		info productDate;
+		info productSku.subString(productSku.length() - 1);
+		funcResult = invokeurl
+		[
+			url :"https://www.zohoapis.com/crm/v2/functions/mycheckandcreatebotd_1/actions/execute?auth_type=oauth"
+			type :GET
+			parameters:{"productID":0,"botdDate":productDate,"botdSize":productSku.subString(productSku.length() - 1)}
+			connection:"zohocon"
+		];
+		productInfo = funcResult.get("details").get("output");
+		// Если БД уже на сайте, но заказали через предзаказ
+		if(productSku.containsIgnoreCase("future") && productInfo.get("isExposed"))
+		{
+			errors = errors + "Error_4:Оформили через предзаказ\n";
+		}
+	}
+	else
+	{
+		// Остальные товары
+		productCode = product.get("sku");
+		info productCode;
+		productResp = zoho.crm.searchRecords("Products","(Product_Code:equals:" + productCode + ")");
+		if(productResp.size() == 0)
+		{
+			// Карта нового продукта
+			productMap = Map();
+			productMap.put("Product_Category","Tilda");
+			options = product.get("options");
+			if(options.size() != 0)
+			{
+				productName = productName + "(";
+				for each  optKey in options.keys()
+				{
+					opt = options.get(optKey);
+					productName = productName + opt.get("option") + ":" + opt.get("variant") + ",";
+				}
+				productName = productName.removeLastOccurence(",") + ")";
+			}
+			productMap.put("Product_Name",productName);
+			productMap.put("Product_Code",productCode);
+			productMap.put("Unit_Price",price);
+			///////////////////////////////////////////
+			//Логика обработки полей для разных типов//
+			///////////////////////////////////////////
+			type = productCode.subString(0,2).toLowerCase();
+			if(type == "c-" || type == "с-")
+			{
+				//Защита от дурака. Русская и английская
+				code_date = productCode.subString(2,8);
+				info "code_date";
+				info code_date;
+				if(isNumber(code_date))
+				{
+					info "yes";
+					code_date = toDate(code_date,"yyMMdd").addDay(7);
+					productMap.put("valid_until_date",code_date);
+					info productMap;
+				}
+				info "no";
+			}
+			productInfo = zoho.crm.createRecord("Products",productMap);
+		}
+		else
+		{
+			if(productCode == "wedding" || productCode == "subscription")
+			{
+				opt_text = "";
+				options = product.get("options");
+				opt = options.get("0");
+				// Только в первом хранится вся инфа
+				info opt;
+				v_list = opt.get("variant").toList(' | ');
+				info v_list;
+				for each  v in v_list
+				{
+					opt_text = opt_text + v + "\n";
+				}
+				info opt_text;
+				forUs = forUs + opt_text;
+			}
+			productInfo = productResp.get(0);
+		}
+	}
+	// Создание заказа на продажу
+	productDetails = Map();
+	info 0;
+	info productInfo;
+	productDetails.put("product",{"id":productInfo.get("id").toDecimal()});
+	productDetails.put("quantity",product.get("quantity").toDecimal());
+	productDetails.put("list_price",price);
+	salesProdList.add(productDetails);
+}
+// Добавление скидки
+discount = leadInfo.get("payment").get("discount");
+if(discount != null)
+{
+	discountProd = zoho.crm.searchRecords("Products","(Product_Code:equals:discount)");
+	discountDetails = Map();
+	discountDetails.put("product",{"id":discountProd.get(0).get("id").toDecimal()});
+	discountDetails.put("quantity",1);
+	discountDetails.put("list_price",0 - discount.toDecimal());
+	salesProdList.add(discountDetails);
+}
+// Добавление доставки + Заполнение времени доставки
+if(delivery.contains("3 часовой"))
+{
+	deliveryProd = zoho.crm.searchRecords("Products","(Product_Code:equals:delivery3h)");
+	dealValues.put("deliveryTime",leadInfo.get("Interval"));
+}
+else if(delivery.contains("к точному"))
+{
+	deliveryProd = zoho.crm.searchRecords("Products","(Product_Code:equals:deliveryExact)");
+	dealValues.put("deliveryTime",leadInfo.get("deliveryTime"));
+}
+else if(delivery.contains("за МКАД"))
+{
+	deliveryProd = zoho.crm.searchRecords("Products","(Product_Code:equals:deliveryBeyond)");
+	dealValues.put("deliveryTime",leadInfo.get("Interval"));
+}
+else if(delivery.contains("Самовывоз"))
+{
+	deliveryProd = zoho.crm.searchRecords("Products","(Product_Code:equals:deliveryPickup)");
+	dealValues.put("deliveryTime",leadInfo.get("deliveryTime"));
+}
+else
+{
+	//ERROR
+}
+// Поле для нас. В нём важная инфа висит
+dealValues.put("ForUs",forUs);
+dealValues.put("errors",errors);
+deliveryDetails = Map();
+deliveryDetails.put("product",{"id":deliveryProd.get(0).get("id").toDecimal()});
+deliveryDetails.put("quantity",1);
+deliveryDetails.put("list_price",deliveryPrice);
+salesProdList.add(deliveryDetails);
+salesOrderMap.put("Product_Details",salesProdList);
+// конвертируем сделку
+info "dataMap";
+info dataMap;
+dealResp = zoho.crm.convertLead(leadID,dataMap);
+info "dealResp";
+info dealResp;
+salesOrderMap.put("Deal_Name",{"id":dealResp.get("Deals")});
+info "salesOrderMap";
+info salesOrderMap;
+salesResp = zoho.crm.createRecord("Sales_Orders",salesOrderMap);
+info "salesResp";
+info salesResp;
+if(!errorList.isEmpty())
+{
+	// Создать тег с еррором и текстами!!!
+}
+// Заполняем товары в заказе
+p_t = "";
+if(leadInfo.get("paymentsystem") == "cash")
+{
+	p_t = "Наличные";
+}
+else if(leadInfo.get("paymentsystem") == "tinkoff")
+{
+	p_t = "Tinkoff";
+}
+resp = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v2/functions/reserveproductswf/actions/execute?auth_type=oauth"
+	type :GET
+	parameters:{"SOID":salesResp.get("id"),"t_order_id":"1284329:" + orderID,"payment_type":p_t}
+	connection:"zohocon"
+];
+// Заполняем тексты
+resp = invokeurl
+[
+	url :"https://www.zohoapis.com/crm/v2/functions/filltextfileds/actions/execute?auth_type=oauth"
+	type :GET
+	parameters:{"dealID":dealResp.get("Deals")}
+	connection:"zohocon"
+];
+data = Map();
+data.put('id',dealResp.get("Deals"));
+header_data = Map();
+header_data.put("Content-Type","application/json");
+resp = invokeurl
+[
+	url :"https://enso-listener-prod.herokuapp.com/send_welcome_message"
+	type :POST
+	parameters:data.toText()
+	headers:header_data
+];
+info resp;
